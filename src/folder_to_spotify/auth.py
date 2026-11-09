@@ -18,7 +18,7 @@ SCOPES = " ".join(
 )
 
 
-def get_spotfy_client() -> spotipy.Spotify:
+def get_spotify_client() -> spotipy.Spotify:
     client_id = os.environ.get("SPOTIPY_CLIENT_ID", "").strip()
 
     if not client_id:
@@ -31,6 +31,7 @@ def get_spotfy_client() -> spotipy.Spotify:
     cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     cache_dir.chmod(0o700)
 
+    # Separate token caches if the configured Spotify app changes
     cache_name = f"spotify-{client_id}.json"
     cache_handler = CacheFileHandler(
         cache_path=str(cache_dir / cache_name)
@@ -54,7 +55,7 @@ def get_spotfy_client() -> spotipy.Spotify:
 
 def main() -> None:
     try:
-        spotify = get_spotfy_client()
+        spotify = get_spotify_client()
     except ValueError as e:
         raise SystemExit(str(e)) from e
 
