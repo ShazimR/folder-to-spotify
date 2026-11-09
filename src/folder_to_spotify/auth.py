@@ -6,7 +6,6 @@ import spotipy
 from spotipy.cache_handler import CacheFileHandler
 from spotipy.oauth2 import SpotifyPKCE
 
-
 REDIRECT_URI = "http://127.0.0.1:8888/callback"
 
 SCOPES = " ".join(
@@ -22,9 +21,7 @@ def get_spotify_client() -> spotipy.Spotify:
     client_id = os.environ.get("SPOTIPY_CLIENT_ID", "").strip()
 
     if not client_id:
-        raise ValueError(
-            "Set the SPOTIPY_CLIENT_ID environment variable first."
-        )
+        raise ValueError("Set the SPOTIPY_CLIENT_ID environment variable first.")
 
     # Store tokens outside the repo
     cache_dir = Path.home() / ".config" / "folder-to-spotify"
@@ -33,9 +30,7 @@ def get_spotify_client() -> spotipy.Spotify:
 
     # Separate token caches if the configured Spotify app changes
     cache_name = f"spotify-{client_id}.json"
-    cache_handler = CacheFileHandler(
-        cache_path=str(cache_dir / cache_name)
-    )
+    cache_handler = CacheFileHandler(cache_path=str(cache_dir / cache_name))
 
     auth_manager = SpotifyPKCE(
         client_id=client_id,

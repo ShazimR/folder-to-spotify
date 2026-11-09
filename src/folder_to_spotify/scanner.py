@@ -1,7 +1,6 @@
 from collections.abc import Iterator
 from pathlib import Path
 
-
 SUPPORTED_EXTENSIONS = {
     ".mp3",
     ".mp4",
@@ -15,6 +14,7 @@ SUPPORTED_EXTENSIONS = {
     ".aif",
     ".wma",
 }
+
 
 def find_music_files(root: Path) -> Iterator[Path]:
     for path in root.rglob("*"):

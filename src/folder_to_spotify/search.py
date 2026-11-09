@@ -1,6 +1,6 @@
 import argparse
-import sys
 import os
+import sys
 from pathlib import Path
 
 from spotipy import Spotify
@@ -11,27 +11,21 @@ from folder_to_spotify.auth import get_spotify_client
 from folder_to_spotify.matcher import match_song
 from folder_to_spotify.metadata import Song, read_song
 from folder_to_spotify.scanner import find_music_files
-from folder_to_spotify.search_cache import (
-    CacheMiss,
-    SearchCache,
-    SearchPaused
-)
+from folder_to_spotify.search_cache import CacheMiss, SearchCache, SearchPaused
 
 
 def search_text(value: str) -> str:
     # Remove query punctuation while preserving unicde letters and numbers
-    return " ".join(
-        "".join(char if char.isalnum() else " " for char in value).split()
-    )
+    return " ".join("".join(char if char.isalnum() else " " for char in value).split())
 
 
 def find_candidates(
-        spotify: Spotify,
-        song: Song,
-        cache: SearchCache,
-        namespace: str,
-        *,
-        offline: bool = False,
+    spotify: Spotify,
+    song: Song,
+    cache: SearchCache,
+    namespace: str,
+    *,
+    offline: bool = False,
 ) -> tuple[list[dict], str]:
     title = search_text(song.title)
     artist = search_text(song.artist or "")
@@ -63,11 +57,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Preview Spotify candidates for local music files."
     )
-    parser.add_argument(
-        "root",
-        type=Path,
-        help="Root music folder"
-    )
+    parser.add_argument("root", type=Path, help="Root music folder")
     parser.add_argument(
         "--limit",
         type=int,
@@ -77,7 +67,7 @@ def main() -> None:
     parser.add_argument(
         "--offline",
         action="store_true",
-        help="Use saved search results only; make no Spotify requests"
+        help="Use saved search results only; make no Spotify requests",
     )
     args = parser.parse_args()
 
@@ -132,12 +122,11 @@ def main() -> None:
             raise SystemExit(
                 f"\n{e}\n"
                 "Stopped. Completed searches were saved; "
-                'rerun the same command after the cooldown.'
+                "rerun the same command after the cooldown."
             ) from e
         except SpotifyException as e:
             raise SystemExit(
-                f"Spotify search failed (HTTP {e.http_status}): "
-                f"{e.msg}"
+                f"Spotify search failed (HTTP {e.http_status}): {e.msg}"
             ) from e
 
         print(f"Search source: {source}")
@@ -159,17 +148,14 @@ def main() -> None:
 
         for index, candidate in enumerate(result.candidates, start=1):
             track = candidate.track
-            artists = ", ".join(
-                artist["name"] for artist in track["artists"]
-            )
+            artists = ", ".join(artist["name"] for artist in track["artists"])
             duration = track["duration_ms"] / 1000
 
             selected = (
-                " [AUTO_SELECTED]"
-                if index == 1 and result.status == "matched"
-                else ""
+                " [AUTO_SELECTED]" if index == 1 and result.status == "matched" else ""
             )
 
+            print(f"  {index}. {artists} - {track['name']}{selected}")
             print(
                 f"     Score: {candidate.score * 100:.1f}/100 | "
                 f"Album: {track['album']['name']} | "
@@ -196,10 +182,7 @@ def main() -> None:
             )
 
             if candidate.duration_difference is not None:
-                print(
-                    "     Duration difference: "
-                    f"{candidate.duration_difference:.1f}s"
-                )
+                print(f"     Duration difference: {candidate.duration_difference:.1f}s")
 
             print(f"     {track['external_urls']['spotify']}")
 

@@ -6,8 +6,7 @@ from typing import Literal
 
 from folder_to_spotify.metadata import Song
 
-
-MatchStatus = Literal["matched", "review",'unmatched']
+MatchStatus = Literal["matched", "review", "unmatched"]
 
 
 @dataclass(frozen=True)
@@ -48,32 +47,25 @@ def similarity(left: str, right: str) -> float:
     if not left or not right:
         return 0.0
 
-    return SequenceMatcher(
-        None, left, right, autojunk=False
-    ).ratio()
+    return SequenceMatcher(None, left, right, autojunk=False).ratio()
 
 
 def rank_candidate(song: Song, track: dict) -> Candidate:
     title_score = similarity(song.title, track["name"])
 
-    artist_names = [
-        artist["name"] for artist in track["artists"]
-    ]
+    artist_names = [artist["name"] for artist in track["artists"]]
 
     # Compare with individual artists and the full artist credit
     artist_score = None
     if song.artist:
         artist_options = artist_names + [", ".join(artist_names)]
         artist_score = max(
-            (similarity(song.artist, name) for name in artist_options),
-            default=0.0
+            (similarity(song.artist, name) for name in artist_options), default=0.0
         )
 
     album_score = None
     if song.album:
-        album_score = similarity(
-            song.album, track["album"]["name"]
-        )
+        album_score = similarity(song.album, track["album"]["name"])
 
     duration_difference = None
     duration_score = None
@@ -91,9 +83,7 @@ def rank_candidate(song: Song, track: dict) -> Candidate:
             duration_score = 1.0
         else:
             # Gradually reduce the score -> 0 at 15 seconds
-            duration_score = max(
-                0.0, (15 - duration_difference) / 12
-            )
+            duration_score = max(0.0, (15 - duration_difference) / 12)
 
     signals = [
         (title_score, 0.45),
@@ -103,11 +93,7 @@ def rank_candidate(song: Song, track: dict) -> Candidate:
     ]
 
     # Missing metadata contributes neither points nor weight
-    available = [
-        (value, weight)
-        for value, weight in signals
-        if value is not None
-    ]
+    available = [(value, weight) for value, weight in signals if value is not None]
     score = sum(value * weight for value, weight in available)
     score /= sum(weight for _, weight in available)
 
@@ -126,10 +112,7 @@ def match_song(song: Song, tracks: list[dict]) -> MatchResult:
     unique_tracks = {track["uri"]: track for track in tracks}
 
     ranked = sorted(
-        (
-            rank_candidate(song, track)
-            for track in unique_tracks.values()
-        ),
+        (rank_candidate(song, track) for track in unique_tracks.values()),
         key=lambda candidate: candidate.score,
         reverse=True,
     )
@@ -138,7 +121,7 @@ def match_song(song: Song, tracks: list[dict]) -> MatchResult:
         return MatchResult(
             status="unmatched",
             candidates=[],
-            reasons=["No candidates returned for this query"]
+            reasons=["No candidates returned for this query"],
         )
 
     best = ranked[0]
@@ -156,11 +139,9 @@ def match_song(song: Song, tracks: list[dict]) -> MatchResult:
         reasons.append("Artist is not an exact normalized match")
 
     if best.duration_difference is None:
-        reasons.append('Duration is missing or invalid')
+        reasons.append("Duration is missing or invalid")
     elif best.duration_difference > 3:
-        reasons.append(
-            f"Duration differs by {best.duration_difference:.1f}s"
-        )
+        reasons.append(f"Duration differs by {best.duration_difference:.1f}s")
 
     if best.track.get("is_playable") is False:
         reasons.append("Spotfy marks this candidate as unplayable")
@@ -182,7 +163,6 @@ def match_song(song: Song, tracks: list[dict]) -> MatchResult:
         status="matched",
         candidates=ranked,
         reasons=[
-            "Title and artist match; duration is within 3s; "
-            "candidate has a clear lead"
-        ]
+            "Title and artist match; duration is within 3s; candidate has a clear lead"
+        ],
     )

@@ -1,6 +1,6 @@
 import argparse
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from tinytag import TinyTagException
 
@@ -48,9 +48,7 @@ def main() -> None:
         artist = song.artist or "Unknown artist"
         album = song.album or "Unknown album"
         duration = (
-            f"{song.duration:.0f}s"
-            if song.duration is not None
-            else "Unknown duration"
+            f"{song.duration:.0f}s" if song.duration is not None else "Unknown duration"
         )
         fallback = " [filename fallback]" if song.title_from_filename else ""
 

@@ -7,7 +7,6 @@ from pathlib import Path
 from spotipy import Spotify
 from spotipy.exceptions import SpotifyException
 
-
 CACHE_TTL = 7 * 24 * 60 * 60  # seven days
 
 
@@ -56,9 +55,7 @@ class SearchCache:
             )
 
     def pause(self, seconds: int | None, reason: str) -> None:
-        deadline = (
-            time.time() + seconds if seconds is not None else None
-        )
+        deadline = time.time() + seconds if seconds is not None else None
 
         # preserve a longer existing cooldown
         existing = self._read("cooldown")
@@ -69,10 +66,7 @@ class SearchCache:
             elif deadline is not None:
                 deadline = max(deadline, old["until"])
 
-        self._write(
-            "cooldown",
-            {"until": deadline, "reason": reason}
-        )
+        self._write("cooldown", {"until": deadline, "reason": reason})
 
     def _check_cooldown(self) -> None:
         row = self._read("cooldown")
@@ -97,16 +91,16 @@ class SearchCache:
                 f"{resume_at:%Y-%m-%d %H:%M:%S %Z} "
                 f"({remaining / 3600:.1f} hours remaining). "
                 f"Reason: {cooldown['reason']}. "
-                'Cached searches remain available.'
+                "Cached searches remain available."
             )
 
     def search(
-            self,
-            spotify: Spotify,
-            query: str,
-            namespace: str,
-            *,
-            offline: bool = False,
+        self,
+        spotify: Spotify,
+        query: str,
+        namespace: str,
+        *,
+        offline: bool = False,
     ) -> tuple[list[dict], str]:
         key = json.dumps(
             {

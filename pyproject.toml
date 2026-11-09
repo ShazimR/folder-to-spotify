@@ -18,3 +18,19 @@ folder-to-spotify = "folder_to_spotify.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+]
+
+[tool.ruff.lint]
+select = [
+    "E4",  # Import placement and structure
+    "E7",  # Statement errors
+    "E9",  # Runtime-related syntax errors
+    "F",   # Undefined names, unused imports, etc.
+    "I",   # Import sorting
+    "UP",  # Modern Python syntax
+    "B",   # Common bug patterns
+]
