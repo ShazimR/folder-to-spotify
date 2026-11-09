@@ -50,6 +50,8 @@ def get_spotify_client() -> spotipy.Spotify:
     return spotipy.Spotify(
         auth_manager=auth_manager,
         requests_timeout=20,
+        retries=0,
+        status_retries=0,
     )
 
 
