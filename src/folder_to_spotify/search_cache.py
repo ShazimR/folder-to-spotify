@@ -37,14 +37,14 @@ class SearchCache:
                 """
             )
 
-    def _read(self, key: str):
+    def _read(self, key: str) -> tuple[str, float] | None:
         with sqlite3.connect(self.path) as db:
             return db.execute(
                 "SELECT value, saved_at FROM cache WHERE key = ?",
                 (key,),
             ).fetchone()
 
-    def _write(self, key: str, value) -> None:
+    def _write(self, key: str, value: object) -> None:
         with sqlite3.connect(self.path) as db:
             db.execute(
                 """
@@ -144,10 +144,12 @@ class SearchCache:
             headers = e.headers or {}
             raw_delay = headers.get("Retry-After")
 
-            try:
-                seconds = max(1, int(raw_delay))
-            except (TypeError, ValueError):
-                seconds = None
+            seconds: int | None = None
+            if raw_delay is not None:
+                try:
+                    seconds = max(1, int(raw_delay))
+                except (TypeError, ValueError):
+                    pass
 
             reason = getattr(e, "reason", None) or "HTTP 429"
             self.pause(seconds, str(reason))
