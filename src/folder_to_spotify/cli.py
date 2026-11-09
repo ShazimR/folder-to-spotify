@@ -1,6 +1,8 @@
 import argparse
 from pathlib import Path
 
+from folder_to_spotify.scanner import find_music_files
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -18,8 +20,14 @@ def main() -> None:
     if not root.is_dir():
         parser.error(f"Not a directory: {root}")
 
-    print(f"Music folder: {root}")
-    print(f"Folder scanning is not implemented yet.")
+    print(f"Scanning: {root}\n")
+
+    count = 0
+    for path in find_music_files(root):
+        print(path.relative_to(root))
+        count += 1
+
+    print(f'\nFound {count} candidate music files.')
 
 
 if __name__ == "__main__":
