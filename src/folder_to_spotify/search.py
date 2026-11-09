@@ -7,6 +7,7 @@ from spotipy.exceptions import SpotifyException
 from tinytag import TinyTagException
 
 from folder_to_spotify.auth import get_spotify_client
+from folder_to_spotify.matcher import match_song
 from folder_to_spotify.metadata import Song, read_song
 from folder_to_spotify.scanner import find_music_files
 
@@ -70,6 +71,7 @@ def main() -> None:
         parser.error(str(e))
 
     searched = 0
+    counts = {"matched": 0, "review": 0, "unmatched": 0}
 
     for path in find_music_files(root):
         try:
@@ -95,24 +97,38 @@ def main() -> None:
 
         searched += 1
 
-        if not candidates:
-            print("  No candidates returned for this query.")
+        result = match_song(song, candidates)
+        counts[result.status] += 1
 
-        for index, track in enumerate(candidates, start=1):
+        print(f"Decision: {result.status.upper()}")
+
+        for reason in result.reasons:
+            print(f"  Reason: {reason}")
+
+        for index, candidate in enumerate(result.candidates, start=1):
+            track = candidate.track
             artists = ", ".join(
                 artist["name"] for artist in track["artists"]
             )
             duration = track["duration_ms"] / 1000
 
-            print(f"  {index}. {artists} - {track['name']}")
+            selected = (
+                " [AUTO_SELECTED]"
+                if index == 1 and result.status == "matched"
+                else ""
+            )
+
             print(
-                f"     Album: {track['album']['name']} | "
+                f"     Score: {candidate.score * 100:.1f}/100 | "
+                f"Album: {track['album']['name']} | "
                 f"Duration: {format_duration(duration)}"
             )
 
-            if song.duration is not None:
-                difference = abs(duration - song.duration)
-                print(f"     Duration difference: {difference:.1f}s")
+            if candidate.duration_difference is not None:
+                print(
+                    "     Duration difference: "
+                    f"{candidate.duration_difference:.1f}s"
+                )
 
             print(f"     {track['external_urls']['spotify']}")
 
@@ -120,6 +136,12 @@ def main() -> None:
             break
 
     print(f"\n Previewed {searched} local songs.")
+    print(
+        f"Matched: {counts['matched']} | "
+        f"Review: {counts['review']} | "
+        f"Unmatched: {counts['unmatched']}"
+    )
+    print("dry run: no playlists were changed")
 
 
 if __name__ == "__main__":
