@@ -8,7 +8,7 @@ from spotipy.exceptions import SpotifyException
 from tinytag import TinyTagException
 
 from folder_to_spotify.auth import get_spotify_client
-from folder_to_spotify.matcher import match_song
+from folder_to_spotify.matcher import match_song, strongest_competitor
 from folder_to_spotify.metadata import Song, read_song
 from folder_to_spotify.scanner import find_music_files
 from folder_to_spotify.search_cache import CacheMiss, SearchCache, SearchPaused
@@ -134,10 +134,13 @@ def main() -> None:
         searched += 1
 
         result = match_song(song, candidates)
+        competitor = strongest_competitor(result.candidates)
 
-        if len(result.candidates) > 1:
-            gap = result.candidates[0].score - result.candidates[1].score
-            print(f"Top-two score gap: {gap * 100:.2f} points")
+        if competitor is not None:
+            gap = result.candidates[0].score - competitor.score
+            print(f"Competing candidate score gap: {gap * 100:.2f} points")
+        elif result.candidates:
+            print("No competng candidate outside equivalent releases")
 
         counts[result.status] += 1
 
@@ -161,6 +164,9 @@ def main() -> None:
                 f"Album: {track['album']['name']} | "
                 f"Duration: {format_duration(duration)}"
             )
+
+            isrc = (track.get("external_ids") or {}).get("isrc")
+            print(f"     ISRC: {isrc or 'missing'}")
 
             artist_score = (
                 f"{candidate.artist_similarity:.3f}"

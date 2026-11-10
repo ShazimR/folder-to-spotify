@@ -12,6 +12,7 @@ dist/
 .coverage
 .mypy_cache/
 htmlcov/
+.tmp/
 
 # Credentials and local configuration
 .env

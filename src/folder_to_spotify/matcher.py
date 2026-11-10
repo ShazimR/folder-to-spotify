@@ -40,6 +40,10 @@ def normalize(value: str) -> str:
     return " ".join(value.split())
 
 
+def normalize_artist(value: str) -> str:
+    return normalize(value).removeprefix("the ")
+
+
 def similarity(left: str, right: str) -> float:
     left = normalize(left)
     right = normalize(right)
@@ -59,8 +63,13 @@ def rank_candidate(song: Song, track: dict) -> Candidate:
     artist_score = None
     if song.artist:
         artist_options = artist_names + [", ".join(artist_names)]
+        local_artist = normalize_artist(song.artist)
         artist_score = max(
-            (similarity(song.artist, name) for name in artist_options), default=0.0
+            (
+                similarity(local_artist, normalize_artist(name))
+                for name in artist_options
+            ),
+            default=0.0,
         )
 
     album_score = None
@@ -113,8 +122,15 @@ def match_song(song: Song, tracks: list[dict]) -> MatchResult:
 
     ranked = sorted(
         (rank_candidate(song, track) for track in unique_tracks.values()),
-        key=lambda candidate: candidate.score,
-        reverse=True,
+        key=lambda candidate: (
+            -candidate.score,
+            (
+                candidate.duration_difference
+                if candidate.duration_difference is not None
+                else float("inf")
+            ),
+            candidate.track["uri"],
+        ),
     )
 
     if not ranked:
@@ -146,11 +162,14 @@ def match_song(song: Song, tracks: list[dict]) -> MatchResult:
     if best.track.get("is_playable") is False:
         reasons.append("Spotfy marks this candidate as unplayable")
 
-    if len(ranked) > 1:
-        margin = best.score - ranked[1].score
+    competitor = strongest_competitor(ranked)
+    if competitor is not None:
+        margin = best.score - competitor.score
 
         if margin < 0.03:
-            reasons.append("Another candidate has a very similar score")
+            reasons.append(
+                "Another candidate outside the equivalent release group has a very similar score"
+            )
 
     if reasons:
         return MatchResult(
@@ -163,6 +182,52 @@ def match_song(song: Song, tracks: list[dict]) -> MatchResult:
         status="matched",
         candidates=ranked,
         reasons=[
-            "Title and artist match; duration is within 3s; candidate has a clear lead"
+            "Title and artist match; duration is within 3s; no close competing candidate outside equivalent releases"
         ],
+    )
+
+
+def same_recording(left: dict, right: dict) -> bool:
+    left_isrc = (left.get("external_ids") or {}).get("isrc")
+    right_isrc = (right.get("external_ids") or {}).get("isrc")
+
+    # missing identifiers must never count as a match
+    if not left_isrc or left_isrc != right_isrc:
+        return False
+
+    if normalize(left["name"]) != normalize(right["name"]):
+        return False
+
+    left_artists = {artist["id"] for artist in left["artists"] if artist.get("id")}
+    right_artists = {artist["id"] for artist in right["artists"] if artist.get("id")}
+
+    if not left_artists or left_artists != right_artists:
+        return False
+
+    left_duration = left.get("duration_ms")
+    right_duration = right.get("duration_ms")
+
+    if left_duration is None or right_duration is None:
+        return False
+
+    return (
+        left_duration > 0
+        and right_duration > 0
+        and abs(left_duration - right_duration) <= 3000
+    )
+
+
+def strongest_competitor(ranked: list[Candidate]) -> Candidate | None:
+    if not ranked:
+        return None
+
+    best = ranked[0]
+
+    return next(
+        (
+            candidate
+            for candidate in ranked[1:]
+            if not same_recording(best.track, candidate.track)
+        ),
+        None,
     )
