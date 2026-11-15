@@ -1,4 +1,6 @@
+import argparse
 import sqlite3
+from collections.abc import Iterable
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -113,10 +115,47 @@ class DecisionStore:
                     ),
                 )
 
-    def forget(self, path: Path) -> None:
+    def forget(self, path: Path) -> bool:
+        return self.forget_many([path]) > 0
+
+    def forget_many(self, paths: Iterable[Path]) -> int:
+        unique_paths = {str(path.expanduser().resolve()) for path in paths}
+
+        if not unique_paths:
+            return 0
+
         with closing(sqlite3.connect(self.database)) as db:
             with db:
-                db.execute(
+                cursor = db.executemany(
                     "DELETE FROM decisions WHERE path = ?",
-                    (str(path.resolve()),),
+                    [(path,) for path in unique_paths],
                 )
+
+                return cursor.rowcount
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Manage saved song review decisions")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    forget_parser = commands.add_parser(
+        "forget",
+        help="Remove a saved selection or skip for one file",
+    )
+    forget_parser.add_argument(
+        "files",
+        type=Path,
+        nargs="+",
+        help="Paths to one or more local music files",
+    )
+
+    args = parser.parse_args()
+
+    if args.command == "forget":
+        store = DecisionStore()
+        removed = store.forget_many(args.files)
+        print(f"Removed {removed} saved decision(s)")
+
+
+if __name__ == "__main__":
+    main()
