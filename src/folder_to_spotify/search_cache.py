@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import time
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
@@ -26,33 +27,36 @@ class SearchCache:
 
         self.path = directory / "search.sqlite3"
 
-        with sqlite3.connect(self.path) as db:
-            db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS cache (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL,
-                    saved_at REAL NOT NULL
+        with closing(sqlite3.connect(self.path)) as db:
+            with db:
+                db.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS cache (
+                        key      TEXT PRIMARY KEY,
+                        value    TEXT NOT NULL,
+                        saved_at REAL NOT NULL
+                    )
+                    """
                 )
-                """
-            )
 
     def _read(self, key: str) -> tuple[str, float] | None:
-        with sqlite3.connect(self.path) as db:
-            return db.execute(
-                "SELECT value, saved_at FROM cache WHERE key = ?",
-                (key,),
-            ).fetchone()
+        with closing(sqlite3.connect(self.path)) as db:
+            with db:
+                return db.execute(
+                    "SELECT value, saved_at FROM cache WHERE key = ?",
+                    (key,),
+                ).fetchone()
 
     def _write(self, key: str, value: object) -> None:
-        with sqlite3.connect(self.path) as db:
-            db.execute(
-                """
-                INSERT OR REPLACE INTO cache (key, value, saved_at)
-                VALUES (?, ?, ?)
-                """,
-                (key, json.dumps(value), time.time()),
-            )
+        with closing(sqlite3.connect(self.path)) as db:
+            with db:
+                db.execute(
+                    """
+                    INSERT OR REPLACE INTO cache (key, value, saved_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (key, json.dumps(value), time.time()),
+                )
 
     def pause(self, seconds: int | None, reason: str) -> None:
         deadline = time.time() + seconds if seconds is not None else None

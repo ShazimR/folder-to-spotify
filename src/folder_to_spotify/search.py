@@ -9,8 +9,10 @@ from spotipy.exceptions import SpotifyException
 from tinytag import TinyTagException
 
 from folder_to_spotify.auth import get_spotify_client
+from folder_to_spotify.decisions import DecisionStore
 from folder_to_spotify.matcher import MatchMode, match_song, strongest_competitor
 from folder_to_spotify.metadata import Song, read_song
+from folder_to_spotify.review import prompt_review
 from folder_to_spotify.scanner import find_music_files
 from folder_to_spotify.search_cache import CacheMiss, SearchCache, SearchPaused
 
@@ -79,7 +81,15 @@ def main() -> None:
             "song: allow compatible releases"
         ),
     )
+    parser.add_argument(
+        "--review",
+        action="store_true",
+        help="Interactively revew uncertain and unmatched songs",
+    )
     args = parser.parse_args()
+
+    if args.review and (not sys.stdin.isatty() or not sys.stdout.isatty()):
+        parser.error("--review requres an interactive terminal")
 
     mode = cast(MatchMode, args.match_mode)
     print(f"Match mode: {mode}")
@@ -102,12 +112,24 @@ def main() -> None:
     counts = {"matched": 0, "review": 0, "unmatched": 0}
     cache_misses = 0
 
+    decisions = DecisionStore()
+    processed = 0
+    saved_selections = 0
+    saved_skips = 0
+    new_selections = 0
+    new_skips = 0
+
     for path in find_music_files(root):
+        if processed >= args.limit:
+            break
+
         try:
             song = read_song(path)
         except (OSError, TinyTagException) as e:
             print(f"Could not read {path}: {e}", file=sys.stderr)
             continue
+
+        processed += 1
 
         print(f"\nFile: {path.relative_to(root)}")
         print(f"Local: {song.artist or 'Unknown artist'} - {song.title}")
@@ -115,6 +137,18 @@ def main() -> None:
 
         if song.title_from_filename:
             print("Title came from the filename")
+
+        saved = decisions.get(path)
+        if saved is not None:
+            if saved.action == "select":
+                saved_selections += 1
+                print("Decision: SAVED SELECTION")
+                print(f"  Spotify URI: {saved.spotify_uri}")
+            else:
+                saved_skips += 1
+                print("Decision: SAVED SKIP")
+
+            continue
 
         try:
             candidates, source = find_candidates(
@@ -127,9 +161,6 @@ def main() -> None:
         except CacheMiss:
             cache_misses += 1
             print("Decision: NOT SEARCHED - no cached response")
-
-            if searched + cache_misses >= args.limit:
-                break
             continue
         except SearchPaused as e:
             raise SystemExit(
@@ -208,17 +239,41 @@ def main() -> None:
 
             print(f"     {track['external_urls']['spotify']}")
 
-        if searched + cache_misses >= args.limit:
-            break
+        if args.review and result.status in ("review", "unmatched"):
+            response = prompt_review(result.candidates)
 
-    print(f"\nPreviewed {searched} local songs.")
+            if response.action == "quit":
+                print("Review stopped; Earlier choices are saved")
+                break
+
+            if response.action == "save":
+                decision = response.decision
+                if decision is None:
+                    raise RuntimeError("Save response is missing a decision")
+
+                decisions.save(path, decision)
+
+                if decision.action == "select":
+                    new_selections += 1
+                    print(f"Saved selection: {decision.spotify_uri}")
+                else:
+                    new_skips += 1
+                    print("Saved skip")
+            else:
+                print("Left unresolved")
+
+    print(f"\nProcessed {processed} local songs")
+    print(f"Evaluated search results for {searched} songs")
     print(f"Not searched (offline cache misses): {cache_misses}")
     print(
+        f"Automatic results - "
         f"Matched: {counts['matched']} | "
         f"Review: {counts['review']} | "
         f"Unmatched: {counts['unmatched']}"
     )
-    print("Dry run: no playlists were changed")
+    print(f"Reused decisions - Selected:{saved_selections} | Skipped: {saved_skips}")
+    print(f"New decsions saved - Selected: {new_selections} | Skipped: {new_skips}")
+    print("No playlists were changed")
 
 
 if __name__ == "__main__":
