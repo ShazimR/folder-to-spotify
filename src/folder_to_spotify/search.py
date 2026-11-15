@@ -2,13 +2,14 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from typing import cast
 
 from spotipy import Spotify
 from spotipy.exceptions import SpotifyException
 from tinytag import TinyTagException
 
 from folder_to_spotify.auth import get_spotify_client
-from folder_to_spotify.matcher import match_song, strongest_competitor
+from folder_to_spotify.matcher import MatchMode, match_song, strongest_competitor
 from folder_to_spotify.metadata import Song, read_song
 from folder_to_spotify.scanner import find_music_files
 from folder_to_spotify.search_cache import CacheMiss, SearchCache, SearchPaused
@@ -69,7 +70,19 @@ def main() -> None:
         action="store_true",
         help="Use saved search results only; make no Spotify requests",
     )
+    parser.add_argument(
+        "--match-mode",
+        choices=("strict", "song"),
+        default="strict",
+        help=(
+            "strict: conservative recording matching (default); "
+            "song: allow compatible releases"
+        ),
+    )
     args = parser.parse_args()
+
+    mode = cast(MatchMode, args.match_mode)
+    print(f"Match mode: {mode}")
 
     root = args.root.expanduser().resolve()
     if not root.is_dir():
@@ -133,14 +146,16 @@ def main() -> None:
 
         searched += 1
 
-        result = match_song(song, candidates)
-        competitor = strongest_competitor(result.candidates)
+        result = match_song(song, candidates, mode=mode)
 
-        if competitor is not None:
-            gap = result.candidates[0].score - competitor.score
-            print(f"Competing candidate score gap: {gap * 100:.2f} points")
-        elif result.candidates:
-            print("No competng candidate outside equivalent releases")
+        if mode == "strict":
+            competitor = strongest_competitor(result.candidates)
+
+            if competitor is not None:
+                gap = result.candidates[0].score - competitor.score
+                print(f"Competing candidate score gap: {gap * 100:.2f} points")
+            elif result.candidates:
+                print("No competng candidate outside equivalent releases")
 
         counts[result.status] += 1
 
@@ -180,9 +195,10 @@ def main() -> None:
                 else "missing"
             )
 
+            title_label = "base title" if mode == "song" else "title"
             print(
                 f"     Similarities: "
-                f"title={candidate.title_similarity:.3f}, "
+                f"{title_label}={candidate.title_similarity:.3f}, "
                 f"artist={artist_score}, "
                 f"album={album_score}"
             )
