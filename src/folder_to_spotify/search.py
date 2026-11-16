@@ -12,6 +12,7 @@ from folder_to_spotify.auth import get_spotify_client
 from folder_to_spotify.decisions import DecisionStore
 from folder_to_spotify.matcher import MatchMode, match_song, strongest_competitor
 from folder_to_spotify.metadata import Song, read_song
+from folder_to_spotify.plan import GroupingMode, PlaylistPlan
 from folder_to_spotify.review import prompt_review
 from folder_to_spotify.scanner import find_music_files
 from folder_to_spotify.search_cache import CacheMiss, SearchCache, SearchPaused
@@ -86,6 +87,17 @@ def main() -> None:
         action="store_true",
         help="Interactively revew uncertain and unmatched songs",
     )
+    parser.add_argument(
+        "--plan-out",
+        type=Path,
+        help="Write the selected tracks to a new JSON plan file",
+    )
+    parser.add_argument(
+        "--grouping",
+        choices=("single", "folders"),
+        default="single",
+        help="Create one playlist or group by immediate subfolder",
+    )
     args = parser.parse_args()
 
     if args.review and (not sys.stdin.isatty() or not sys.stdout.isatty()):
@@ -99,6 +111,17 @@ def main() -> None:
         parser.error(f"Not a directory: {root}")
     if args.limit < 1:
         parser.error("--limit must be at least 1")
+
+    grouping = cast(GroupingMode, args.grouping)
+    plan_out: Path | None = None
+    if args.plan_out is not None:
+        plan_out = args.plan_out.expanduser().absolute()
+
+        if plan_out.exists() or plan_out.is_symlink():
+            parser.error(f"Output already exists: {plan_out}")
+
+        if not plan_out.parent.is_dir():
+            parser.error(f"Output directory does not exist: {plan_out.parent}")
 
     try:
         spotify = get_spotify_client()
@@ -118,6 +141,10 @@ def main() -> None:
     saved_skips = 0
     new_selections = 0
     new_skips = 0
+
+    plan = PlaylistPlan(root, grouping=grouping)
+    duplicates = 0
+    review_stopped = False
 
     for path in find_music_files(root):
         if processed >= args.limit:
@@ -141,9 +168,16 @@ def main() -> None:
         saved = decisions.get(path)
         if saved is not None:
             if saved.action == "select":
+                uri = saved.spotify_uri
+                if uri is None:
+                    raise RuntimeError("Saved selection is missing a Spotify URI")
+
+                if not plan.add(path, uri):
+                    duplicates += 1
+
                 saved_selections += 1
                 print("Decision: SAVED SELECTION")
-                print(f"  Spotify URI: {saved.spotify_uri}")
+                print(f"  Spotify URI: {uri}")
             else:
                 saved_skips += 1
                 print("Decision: SAVED SKIP")
@@ -178,6 +212,10 @@ def main() -> None:
         searched += 1
 
         result = match_song(song, candidates, mode=mode)
+        selected_uri = result.selected_uri
+        if selected_uri is not None:
+            if not plan.add(path, selected_uri):
+                duplicates += 1
 
         if mode == "strict":
             competitor = strongest_competitor(result.candidates)
@@ -243,6 +281,7 @@ def main() -> None:
             response = prompt_review(result.candidates)
 
             if response.action == "quit":
+                review_stopped = True
                 print("Review stopped; Earlier choices are saved")
                 break
 
@@ -255,6 +294,14 @@ def main() -> None:
 
                 if decision.action == "select":
                     new_selections += 1
+
+                    uri = decision.spotify_uri
+                    if uri is None:
+                        raise RuntimeError("Manual selection is missing a Spotify URI")
+
+                    if not plan.add(path, uri):
+                        duplicates += 1
+
                     print(f"Saved selection: {decision.spotify_uri}")
                 else:
                     new_skips += 1
@@ -274,6 +321,26 @@ def main() -> None:
     print(f"Reused decisions - Selected:{saved_selections} | Skipped: {saved_skips}")
     print(f"New decsions saved - Selected: {new_selections} | Skipped: {new_skips}")
     print("No playlists were changed")
+
+    playlists = plan.playlists
+    total_tracks = sum(len(playlist.track_uris) for playlist in playlists)
+
+    print(f"Plan: {len(playlists)} playlist(s), {total_tracks} track placement(s)")
+    print(f"Duplicate selections omitted within playlists: {duplicates}")
+
+    for playlist in playlists:
+        print(f"  {playlist.name}: {len(playlist.track_uris)} tracks")
+
+    if plan_out is not None:
+        if review_stopped:
+            print("Plan not exported because review was stopped")
+        else:
+            try:
+                plan.save(plan_out)
+            except OSError as e:
+                raise SystemExit(f"Could not save plan to {plan_out}: {e}") from e
+
+            print(f"Plan saved: {plan_out}")
 
 
 if __name__ == "__main__":
