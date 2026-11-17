@@ -1,10 +1,14 @@
 import argparse
+import sqlite3
 from pathlib import Path
 
+from requests.exceptions import RequestException
 from spotipy import Spotify
+from spotipy.exceptions import SpotifyException
 
+from folder_to_spotify.auth import get_spotify_client
 from folder_to_spotify.plan import LoadedPlan, load_plan
-from folder_to_spotify.publish_state import PublishJournal
+from folder_to_spotify.publish_state import PublishJournal, plan_fingerprint
 
 
 def describe_plan(plan: LoadedPlan) -> str:
@@ -141,14 +145,69 @@ def ensure_tracks(
     return added
 
 
+def apply_plan(spotify: Spotify, journal: PublishJournal, plan: LoadedPlan) -> int:
+    if not plan.playlists:
+        return 0
+
+    user = spotify.current_user()
+    if not isinstance(user, dict):
+        raise ValueError("Spotify returned an invalid user response")
+
+    account_id = user.get("id")
+    if not isinstance(account_id, str) or not account_id:
+        raise ValueError("Spotify did not return an account ID")
+
+    print(f"Spotify account: {account_id}")
+
+    fingerprint = plan_fingerprint(plan)
+    total_added = 0
+
+    for index, playlist in enumerate(plan.playlists):
+        print(f"\nPublishing: {playlist.name}")
+
+        playlist_id = ensure_playlist(
+            spotify,
+            journal,
+            account_id=account_id,
+            plan_hash=fingerprint,
+            playlist_index=index,
+            name=playlist.name,
+        )
+
+        print(f"  https://open.spotify.com/playlist/{playlist_id}")
+
+        added = ensure_tracks(
+            spotify,
+            journal,
+            account_id=account_id,
+            plan_hash=fingerprint,
+            playlist_index=index,
+            playlist_id=playlist_id,
+            track_uris=playlist.track_uris,
+        )
+
+        total_added += added
+        print(
+            f"  Added this run: {added}; "
+            f"previously recorded: {len(playlist.track_uris) - added}"
+        )
+
+    return total_added
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Validate and preview a saved Spotify playlist plan"
+        description="Preview or publish a saved Spotify playlist plan"
     )
     parser.add_argument(
         "plan",
         type=Path,
         help="Path to an exported JSON playlist plan",
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Create private Spotfy playlists and add the planned tracks",
     )
     args = parser.parse_args()
 
@@ -163,7 +222,43 @@ def main() -> None:
         print("Nothing to publish")
         return
 
-    print("Preview only, no Spotify requests were made")
+    if not args.apply:
+        print("Prevew only; no Spotify requests were made")
+        print("Use --apply to publish this plan")
+        return
+
+    try:
+        spotify = get_spotify_client()
+        journal = PublishJournal()
+        added = apply_plan(spotify, journal, plan)
+    except PendingPublishError as e:
+        raise SystemExit(f"Publshing paused: {e}") from e
+    except SpotifyException as e:
+        message = f"Spotify request failed (HTTP {e.http_status})"
+
+        if e.http_status == 429:
+            retry_after = (e.headers or {}).get("Retry-After")
+            if retry_after is not None:
+                message += f"  Retry-After: {retry_after} seconds"
+
+        raise SystemExit(
+            f"{message}\n"
+            "Completed operations remain recorded; an unfinished write "
+            "may need reconciliation before it can be retried"
+        ) from e
+    except (RequestException, OSError, sqlite3.Error, ValueError) as e:
+        raise SystemExit(
+            f"Publishing stopped: {e}\n"
+            "Completed operations remain recorded; an unfinished write "
+            "may need reconciliation before it can be retried"
+        ) from e
+    except KeyboardInterrupt:
+        raise SystemExit(
+            "\nPublishing interrupted; progress remains recorded; "
+            "an in-flight request may have unknown outcome"
+        ) from None
+
+    print(f"\nPlan operations complete; tracks added to this run {added}")
 
 
 if __name__ == "__main__":
