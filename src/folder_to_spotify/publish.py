@@ -71,6 +71,76 @@ def ensure_playlist(
     return playlist_id
 
 
+def ensure_tracks(
+    spotify: Spotify,
+    journal: PublishJournal,
+    *,
+    account_id: str,
+    plan_hash: str,
+    playlist_index: int,
+    playlist_id: str,
+    track_uris: list[str],
+) -> int:
+    added = 0
+
+    for offset in range(0, len(track_uris), 100):
+        batch = track_uris[offset : offset + 100]
+        operation = f"playlist:{playlist_index}:add:{offset}"
+
+        exists, result = journal.lookup(account_id, plan_hash, operation)
+
+        if exists:
+            if result is None:
+                raise PendingPublishError(
+                    f"Track addition outcome is unknown for playlist "
+                    f"{playlist_id}, starting at track {offset + 1}; "
+                    "No retry was sent"
+                )
+
+            snapshot_id = result.get("snapshot_id")
+
+            if (
+                result.get("playlist_id") != playlist_id
+                or result.get("track_uris") != batch
+                or not isinstance(snapshot_id, str)
+                or not snapshot_id
+            ):
+                raise ValueError(
+                    f"Saved batch does not match this request: {operation}"
+                )
+
+            continue
+
+        journal.begin(account_id, plan_hash, operation)
+
+        response = spotify.playlist_add_items(
+            playlist_id=playlist_id,
+            items=batch,
+        )
+
+        if not isinstance(response, dict):
+            raise ValueError("Spotify returned an invalid track-add response")
+
+        snapshot_id = response.get("snapshot_id")
+        if not isinstance(snapshot_id, str) or not snapshot_id:
+            raise ValueError("Spotify did not return a snapshot ID")
+
+        journal.complete(
+            account_id,
+            plan_hash,
+            operation,
+            {
+                "playlist_id": playlist_id,
+                "track_uris": batch,
+                "snapshot_id": snapshot_id,
+            },
+        )
+
+        added += len(batch)
+
+    return added
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Validate and preview a saved Spotify playlist plan"
