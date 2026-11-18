@@ -115,3 +115,20 @@ class PublishJournal:
             return True, None
 
         return True, json.loads(row[0])
+
+    def reset_plan(
+        self, account_id: str, plan_hash: str, *, playlist_index: int | None = None
+    ) -> int:
+        if playlist_index is not None and playlist_index < 0:
+            raise ValueError("playlist_index must be non-negative")
+
+        query = "DELETE FROM operations WHERE account_id = ? AND plan_hash = ?"
+        params = [account_id, plan_hash]
+
+        if playlist_index is not None:
+            query += " AND operation GLOB ?"
+            params.append(f"playlist:{playlist_index}:*")
+
+        with closing(sqlite3.connect(self.database)) as db:
+            with db:
+                return db.execute(query, params).rowcount

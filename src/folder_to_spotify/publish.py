@@ -10,6 +10,8 @@ from folder_to_spotify.auth import get_spotify_client
 from folder_to_spotify.plan import LoadedPlan, load_plan
 from folder_to_spotify.publish_state import PublishJournal, plan_fingerprint
 
+TRACKS_PER_BATCH = 100
+
 
 def describe_plan(plan: LoadedPlan) -> str:
     total_tracks = sum(len(playlist.track_uris) for playlist in plan.playlists)
@@ -87,8 +89,8 @@ def ensure_tracks(
 ) -> int:
     added = 0
 
-    for offset in range(0, len(track_uris), 100):
-        batch = track_uris[offset : offset + 100]
+    for offset in range(0, len(track_uris), TRACKS_PER_BATCH):
+        batch = track_uris[offset : offset + TRACKS_PER_BATCH]
         operation = f"playlist:{playlist_index}:add:{offset}"
 
         exists, result = journal.lookup(account_id, plan_hash, operation)
@@ -195,6 +197,35 @@ def apply_plan(spotify: Spotify, journal: PublishJournal, plan: LoadedPlan) -> i
     return total_added
 
 
+def print_journal_status(
+    journal: PublishJournal, plan: LoadedPlan, account_id: str
+) -> None:
+    fingerprint = plan_fingerprint(plan)
+    print(f"Local publish journal for {account_id}")
+
+    for index, playlist in enumerate(plan.playlists):
+        print(f"\n{playlist.name}")
+        prefix = f"playlist:{index}"
+        operations = [(f"{prefix}:create", "Create playlist")]
+
+        for offset in range(0, len(playlist.track_uris), TRACKS_PER_BATCH):
+            end = min(offset + TRACKS_PER_BATCH, len(playlist.track_uris))
+            operations.append(
+                (f"{prefix}:add:{offset}", f"Add tracks {offset + 1}-{end}")
+            )
+
+        for key, label in operations:
+            exists, result = journal.lookup(account_id, fingerprint, key)
+            if not exists:
+                state = "NEVER ATTEMPTED"
+            elif result is None:
+                state = "PENDING (outcome unknown)"
+            else:
+                state = "COMPLETE"
+
+            print(f"  {label}: {state}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Preview or publish a saved Spotify playlist plan"
@@ -204,12 +235,42 @@ def main() -> None:
         type=Path,
         help="Path to an exported JSON playlist plan",
     )
-    parser.add_argument(
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument(
         "--apply",
         action="store_true",
         help="Create private Spotfy playlists and add the planned tracks",
     )
+    actions.add_argument(
+        "--status",
+        action="store_true",
+        help="Show local publish progress for this plan and account",
+    )
+    actions.add_argument(
+        "--reset-journal",
+        action="store_true",
+        help="Forget all local publish progress for this plan and account",
+    )
+    parser.add_argument(
+        "--account-id", help="Spotify account ID printed during publishing"
+    )
+    parser.add_argument(
+        "--playlist",
+        type=int,
+        metavar="NUMBER",
+        help="Reset only this playlist, using ts 1-based number in the plan",
+    )
     args = parser.parse_args()
+
+    if args.playlist is not None and not args.reset_journal:
+        parser.error("--playlist requires --reset-journal")
+
+    account_id = (args.account_id or "").strip()
+    if args.status or args.reset_journal:
+        if not account_id:
+            parser.error("--status and --reset-journal require --account-id")
+    elif args.account_id is not None:
+        parser.error("--account-id is only used with --status or --reset-journal")
 
     try:
         plan = load_plan(args.plan)
@@ -217,6 +278,31 @@ def main() -> None:
         parser.error(str(e))
 
     print(describe_plan(plan))
+
+    if args.status or args.reset_journal:
+        try:
+            journal = PublishJournal()
+            if args.status:
+                print_journal_status(journal, plan, account_id)
+            elif args.playlist is not None:
+                number = args.playlist
+                if not 1 <= number <= len(plan.playlists):
+                    parser.error(f"Playlist {number} does not exist in this plan")
+
+                index = number - 1
+                removed = journal.reset_plan(
+                    account_id, plan_fingerprint(plan), playlist_index=index
+                )
+                print(
+                    f"Removed {removed} journal entries for playlist {number} "
+                    f"({plan.playlists[index].name})"
+                )
+            else:
+                removed = journal.reset_plan(account_id, plan_fingerprint(plan))
+                print(f"Removed {removed} journal entries for {account_id}")
+        except (OSError, sqlite3.Error, ValueError) as e:
+            raise SystemExit(f"Could not access the publish journal: {e}") from e
+        return
 
     if not plan.playlists:
         print("Nothing to publish")

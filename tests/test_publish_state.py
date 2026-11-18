@@ -63,6 +63,83 @@ class PublishJournalTests(unittest.TestCase):
             (False, None),
         )
 
+    def test_reset_removes_creation_and_track_operations(self) -> None:
+        self.journal.begin("account", "plan-hash", "playlist:0:create")
+        self.journal.complete(
+            "account",
+            "plan-hash",
+            "playlist:0:create",
+            {"playlist_id": "example"},
+        )
+        self.journal.begin("account", "plan-hash", "playlist:0:add:0")
+
+        removed = self.journal.reset_plan("account", "plan-hash")
+
+        self.assertEqual(removed, 2)
+        self.assertEqual(
+            self.journal.lookup("account", "plan-hash", "playlist:0:create"),
+            (False, None),
+        )
+        self.assertEqual(
+            self.journal.lookup("account", "plan-hash", "playlist:0:add:0"),
+            (False, None),
+        )
+
+    def test_reset_preserves_other_plans_and_accounts(self) -> None:
+        operation = "playlist:0:create"
+
+        self.journal.begin("account", "plan-hash", operation)
+        self.journal.begin("account", "other-plan", operation)
+        self.journal.begin("other-account", "plan-hash", operation)
+
+        self.journal.reset_plan("account", "plan-hash")
+
+        self.assertEqual(
+            self.journal.lookup("account", "other-plan", operation),
+            (True, None),
+        )
+        self.assertEqual(
+            self.journal.lookup("other-account", "plan-hash", operation),
+            (True, None),
+        )
+
+    def test_reset_unknown_plan_returns_zero(self) -> None:
+        self.assertEqual(
+            self.journal.reset_plan("account", "unknown-plan"),
+            0,
+        )
+
+    def test_reset_allows_operation_to_begin_again(self) -> None:
+        self.journal.begin(*self.key)
+        self.journal.reset_plan("account", "plan-hash")
+
+        self.journal.begin(*self.key)
+
+        self.assertEqual(
+            self.journal.lookup(*self.key),
+            (True, None),
+        )
+
+    def test_reset_one_playlist_preserves_similarly_numbered_playlist(self) -> None:
+        account = "account-a"
+        plan = "plan-a"
+        target = ["playlist:1:create", "playlist:1:add:0", "playlist:1:add:100"]
+        neighbor = "playlist:10:create"
+
+        for operation in [*target, neighbor]:
+            self.journal.begin(account, plan, operation)
+
+        removed = self.journal.reset_plan(account, plan, playlist_index=1)
+
+        self.assertEqual(removed, 3)
+        for operation in target:
+            self.assertEqual(
+                self.journal.lookup(account, plan, operation),
+                (False, None),
+            )
+        self.assertEqual(self.journal.lookup(account, plan, neighbor), (True, None))
+        self.assertEqual(self.journal.reset_plan(account, plan, playlist_index=1), 0)
+
 
 class PlanFingerprintTests(unittest.TestCase):
     def make_plan(self, root: str, uris: list[str]) -> LoadedPlan:
