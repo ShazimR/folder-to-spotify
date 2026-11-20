@@ -11,6 +11,7 @@ from folder_to_spotify.plan import LoadedPlan, load_plan
 from folder_to_spotify.publish_state import PublishJournal, plan_fingerprint
 
 TRACKS_PER_BATCH = 100
+LIBRARY_CHECK_BATCH_SIZE = 40
 
 
 def describe_plan(plan: LoadedPlan) -> str:
@@ -147,10 +148,7 @@ def ensure_tracks(
     return added
 
 
-def apply_plan(spotify: Spotify, journal: PublishJournal, plan: LoadedPlan) -> int:
-    if not plan.playlists:
-        return 0
-
+def get_account_id(spotify: Spotify) -> str:
     user = spotify.current_user()
     if not isinstance(user, dict):
         raise ValueError("Spotify returned an invalid user response")
@@ -159,6 +157,18 @@ def apply_plan(spotify: Spotify, journal: PublishJournal, plan: LoadedPlan) -> i
     if not isinstance(account_id, str) or not account_id:
         raise ValueError("Spotify did not return an account ID")
 
+    return account_id
+
+
+def playlist_url(playlist_id: str) -> str:
+    return f"https://open.spotify.com/playlist/{playlist_id}"
+
+
+def apply_plan(spotify: Spotify, journal: PublishJournal, plan: LoadedPlan) -> int:
+    if not plan.playlists:
+        return 0
+
+    account_id = get_account_id(spotify)
     print(f"Spotify account: {account_id}")
 
     fingerprint = plan_fingerprint(plan)
@@ -176,7 +186,7 @@ def apply_plan(spotify: Spotify, journal: PublishJournal, plan: LoadedPlan) -> i
             name=playlist.name,
         )
 
-        print(f"  https://open.spotify.com/playlist/{playlist_id}")
+        print(f"  {playlist_url(playlist_id)}")
 
         added = ensure_tracks(
             spotify,
@@ -195,6 +205,52 @@ def apply_plan(spotify: Spotify, journal: PublishJournal, plan: LoadedPlan) -> i
         )
 
     return total_added
+
+
+def verify_plan(spotify: Spotify, journal: PublishJournal, plan: LoadedPlan) -> None:
+    account_id = get_account_id(spotify)
+    fingerprint = plan_fingerprint(plan)
+    print(f"\nChecking Spotify library for {account_id}")
+
+    statuses: dict[int, str] = {}
+    recorded: list[tuple[int, str]] = []
+
+    for index, playlist in enumerate(plan.playlists):
+        operation = f"playlist:{index}:create"
+        exists, result = journal.lookup(account_id, fingerprint, operation)
+
+        if not exists:
+            statuses[index] = "NO CREATION RECORD"
+            continue
+        if result is None:
+            statuses[index] = "CREATION PENDING (outcome unknown)"
+            continue
+
+        playlist_id = result.get("playlist_id")
+        if not isinstance(playlist_id, str) or not playlist_id:
+            raise ValueError(f"Invalid saved playlist ID for {playlist.name!r}")
+
+        recorded.append((index, playlist_id))
+
+    for start in range(0, len(recorded), LIBRARY_CHECK_BATCH_SIZE):
+        batch = recorded[start : start + LIBRARY_CHECK_BATCH_SIZE]
+        flags = spotify.current_user_saved_items(
+            [f"spotify:playlist:{playlist_id}" for _, playlist_id in batch]
+        )
+
+        if (
+            not isinstance(flags, list)
+            or len(flags) != len(batch)
+            or not all(isinstance(flag, bool) for flag in flags)
+        ):
+            raise ValueError("Spotify returned an invalid library membership response")
+
+        for (index, playlist_id), present in zip(batch, flags, strict=True):
+            state = "IN LIBRARY" if present else "MISSING FROM LIBRARY"
+            statuses[index] = f"{state}\n     {playlist_url(playlist_id)}"
+
+    for index, playlist in enumerate(plan.playlists):
+        print(f"  {index + 1}. {playlist.name}: {statuses[index]}")
 
 
 def print_journal_status(
@@ -224,6 +280,36 @@ def print_journal_status(
                 state = "COMPLETE"
 
             print(f"  {label}: {state}")
+            if key == f"{prefix}:create" and result is not None:
+                playlist_id = result.get("playlist_id")
+                if isinstance(playlist_id, str) and playlist_id:
+                    print(f"    {playlist_url(playlist_id)}")
+
+
+def reset_plan_with_urls(
+    journal: PublishJournal,
+    plan: LoadedPlan,
+    account_id: str,
+    *,
+    playlist_index: int | None = None,
+) -> int:
+    fingerprint = plan_fingerprint(plan)
+    indices = (
+        range(len(plan.playlists)) if playlist_index is None else (playlist_index,)
+    )
+
+    for index in indices:
+        _, result = journal.lookup(account_id, fingerprint, f"playlist:{index}:create")
+        if result is None:
+            continue
+
+        playlist_id = result.get("playlist_id")
+        if isinstance(playlist_id, str) and playlist_id:
+            name = plan.playlists[index].name
+            print(f"Previously recorded playlist {index + 1}: {name}")
+            print(f"  {playlist_url(playlist_id)}", flush=True)
+
+    return journal.reset_plan(account_id, fingerprint, playlist_index=playlist_index)
 
 
 def main() -> None:
@@ -250,6 +336,11 @@ def main() -> None:
         "--reset-journal",
         action="store_true",
         help="Forget all local publish progress for this plan and account",
+    )
+    actions.add_argument(
+        "--verify",
+        action="store_true",
+        help="Check whether the recorded playlists are in your Spotify library",
     )
     parser.add_argument(
         "--account-id", help="Spotify account ID printed during publishing"
@@ -290,15 +381,15 @@ def main() -> None:
                     parser.error(f"Playlist {number} does not exist in this plan")
 
                 index = number - 1
-                removed = journal.reset_plan(
-                    account_id, plan_fingerprint(plan), playlist_index=index
+                removed = reset_plan_with_urls(
+                    journal, plan, account_id, playlist_index=index
                 )
                 print(
                     f"Removed {removed} journal entries for playlist {number} "
                     f"({plan.playlists[index].name})"
                 )
             else:
-                removed = journal.reset_plan(account_id, plan_fingerprint(plan))
+                removed = reset_plan_with_urls(journal, plan, account_id)
                 print(f"Removed {removed} journal entries for {account_id}")
         except (OSError, sqlite3.Error, ValueError) as e:
             raise SystemExit(f"Could not access the publish journal: {e}") from e
@@ -308,14 +399,19 @@ def main() -> None:
         print("Nothing to publish")
         return
 
-    if not args.apply:
+    if not (args.apply or args.verify):
         print("Prevew only; no Spotify requests were made")
-        print("Use --apply to publish this plan")
+        print(
+            "Use --apply to publish this plan or use --verify to verify added playlists"
+        )
         return
 
     try:
         spotify = get_spotify_client()
         journal = PublishJournal()
+        if args.verify:
+            verify_plan(spotify, journal, plan)
+            return
         added = apply_plan(spotify, journal, plan)
     except PendingPublishError as e:
         raise SystemExit(f"Publshing paused: {e}") from e
@@ -327,22 +423,29 @@ def main() -> None:
             if retry_after is not None:
                 message += f"  Retry-After: {retry_after} seconds"
 
-        raise SystemExit(
-            f"{message}\n"
-            "Completed operations remain recorded; an unfinished write "
-            "may need reconciliation before it can be retried"
-        ) from e
+        errMsg = (
+            f"{message}\nCompleted operations remain recorded; "
+            "an unfinished write may need reconciliation before it can be retried"
+            if args.apply
+            else f"Verification stopped: {message}"
+        )
+        raise SystemExit(f"{errMsg}\n") from e
     except (RequestException, OSError, sqlite3.Error, ValueError) as e:
-        raise SystemExit(
-            f"Publishing stopped: {e}\n"
-            "Completed operations remain recorded; an unfinished write "
-            "may need reconciliation before it can be retried"
-        ) from e
+        errMsg = (
+            f"Publishing stopped: {e}\nCompleted operations remain recorded; "
+            "an unfinished write may need reconciliation before it can be retried"
+            if args.apply
+            else f"Verification stopped: {e}"
+        )
+        raise SystemExit(errMsg) from e
     except KeyboardInterrupt:
-        raise SystemExit(
+        errMsg = (
             "\nPublishing interrupted; progress remains recorded; "
             "an in-flight request may have unknown outcome"
-        ) from None
+            if args.apply
+            else "\nVerfication stopped"
+        )
+        raise SystemExit(errMsg) from None
 
     print(f"\nPlan operations complete; tracks added to this run {added}")
 

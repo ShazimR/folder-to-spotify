@@ -12,6 +12,9 @@ from folder_to_spotify.publish import (
     PendingPublishError,
     apply_plan,
     main,
+    print_journal_status,
+    reset_plan_with_urls,
+    verify_plan,
 )
 from folder_to_spotify.publish_state import PublishJournal, plan_fingerprint
 
@@ -120,6 +123,88 @@ class ApplyPlanTests(unittest.TestCase):
             self.journal,
             self.plan,
         )
+
+    def test_verify_distinguishes_playlists_with_the_same_name(self) -> None:
+        track_uri = "spotify:track:" + "T" * 22
+        plan = LoadedPlan(
+            root="/music",
+            grouping="folders",
+            playlists=[
+                PlannedPlaylist(name="Billboard", track_uris=[track_uri]),
+                PlannedPlaylist(name="Billboard", track_uris=[track_uri]),
+            ],
+        )
+        fingerprint = plan_fingerprint(plan)
+        ids = ["A" * 22, "B" * 22]
+
+        for index, playlist_id in enumerate(ids):
+            operation = f"playlist:{index}:create"
+            self.journal.begin("account", fingerprint, operation)
+            self.journal.complete(
+                "account", fingerprint, operation, {"playlist_id": playlist_id}
+            )
+
+        self.spotify.current_user_saved_items.return_value = [False, True]
+
+        with redirect_stdout(io.StringIO()) as output:
+            verify_plan(self.spotify, self.journal, plan)
+
+        report = output.getvalue()
+
+        self.spotify.current_user_saved_items.assert_called_once_with(
+            [f"spotify:playlist:{playlist_id}" for playlist_id in ids]
+        )
+        self.assertIn(
+            f"1. Billboard: MISSING FROM LIBRARY\n"
+            f"     https://open.spotify.com/playlist/{ids[0]}",
+            report,
+        )
+        self.assertIn(
+            f"2. Billboard: IN LIBRARY\n     https://open.spotify.com/playlist/{ids[1]}",
+            report,
+        )
+        self.assertEqual(
+            self.journal.lookup("account", fingerprint, "playlist:0:create"),
+            (True, {"playlist_id": ids[0]}),
+        )
+
+    def test_reset_prints_recorded_url_once(self) -> None:
+        fingerprint = plan_fingerprint(self.plan)
+        operation = "playlist:0:create"
+        self.journal.begin("account", fingerprint, operation)
+        self.journal.complete(
+            "account", fingerprint, operation, {"playlist_id": "original-id"}
+        )
+
+        with redirect_stdout(io.StringIO()) as first:
+            removed = reset_plan_with_urls(
+                self.journal, self.plan, "account", playlist_index=0
+            )
+
+        self.assertEqual(removed, 1)
+        self.assertIn("https://open.spotify.com/playlist/original-id", first.getvalue())
+
+        with redirect_stdout(io.StringIO()) as second:
+            removed = reset_plan_with_urls(self.journal, self.plan, "account")
+
+        self.assertEqual(removed, 0)
+        self.assertEqual(second.getvalue(), "")
+
+    def test_status_prints_playlist_url_once(self) -> None:
+        fingerprint = plan_fingerprint(self.plan)
+        for operation in ("playlist:0:create", "playlist:0:add:0"):
+            self.journal.begin("account", fingerprint, operation)
+            self.journal.complete(
+                "account", fingerprint, operation, {"playlist_id": "original-id"}
+            )
+
+        with redirect_stdout(io.StringIO()) as output:
+            print_journal_status(self.journal, self.plan, "account")
+
+        report = output.getvalue()
+        url = "https://open.spotify.com/playlist/original-id"
+        self.assertIn(f"Create playlist: COMPLETE\n    {url}", report)
+        self.assertEqual(report.count(url), 1)
 
 
 if __name__ == "__main__":
