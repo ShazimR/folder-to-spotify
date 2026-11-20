@@ -149,3 +149,18 @@ bash scripts/check.sh
 ```
 
 The script runs Ruff linting and formatting checks, mypy, and the unittest suite. Use `folder-to-spotify COMMAND --help` to see the options for any command.
+
+## Contributing
+
+Issues and pull requests are welcome. If you find a bug or have a feature idea,
+[open an issue](https://github.com/ShazimR/folder-to-spotify/issues).
+For song-matching issues, include the match mode, the local track metadata,
+and which Spotify candidate you expected the CLI to select.
+
+To contribute a change, fork the repository, make your changes on a branch,
+and run `bash scripts/check.sh`. Open a pull request against `main` describing
+what changed and how you tested it. I review pull requests before merging.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
