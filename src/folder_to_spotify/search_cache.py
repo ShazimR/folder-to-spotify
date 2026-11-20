@@ -9,6 +9,7 @@ from spotipy import Spotify
 from spotipy.exceptions import SpotifyException
 
 CACHE_TTL = 7 * 24 * 60 * 60  # seven days
+FALLBACK_COOLDOWN_SECONDS = 24 * 60 * 60  # one day
 
 
 class SearchPaused(Exception):
@@ -59,16 +60,17 @@ class SearchCache:
                 )
 
     def pause(self, seconds: int | None, reason: str) -> None:
-        deadline = time.time() + seconds if seconds is not None else None
+        delay = FALLBACK_COOLDOWN_SECONDS if seconds is None else seconds
+        deadline = time.time() + delay
 
         # preserve a longer existing cooldown
         existing = self._read("cooldown")
-        if existing:
-            old = json.loads(existing[0])
-            if old["until"] is None:
-                deadline = None
-            elif deadline is not None:
-                deadline = max(deadline, old["until"])
+        if existing is not None:
+            value, saved_at = existing
+            old_deadline = json.loads(value)["until"]
+            if old_deadline is None:
+                old_deadline = saved_at + FALLBACK_COOLDOWN_SECONDS
+            deadline = max(deadline, old_deadline)
 
         self._write("cooldown", {"until": deadline, "reason": reason})
 
@@ -81,11 +83,9 @@ class SearchCache:
         deadline = cooldown["until"]
 
         if deadline is None:
-            raise SearchPaused(
-                f"Spotify paused searches: {cooldown['reason']}. "
-                "No valid Retry-After was supplied; automatic retries "
-                "are disabled. Cached searches remain available."
-            )
+            # older versions saved at headerless cooldowns without an expiry
+            saved_at = row[1]
+            deadline = saved_at + FALLBACK_COOLDOWN_SECONDS
 
         remaining = deadline - time.time()
         if remaining > 0:

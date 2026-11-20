@@ -3,6 +3,7 @@ import secrets
 from pathlib import Path
 
 import spotipy
+from requests import Session
 from spotipy.cache_handler import CacheFileHandler
 from spotipy.oauth2 import SpotifyPKCE
 
@@ -46,6 +47,7 @@ def get_spotify_client() -> spotipy.Spotify:
 
     return spotipy.Spotify(
         auth_manager=auth_manager,
+        requests_session=Session(),
         requests_timeout=20,
         retries=0,
         status_retries=0,
