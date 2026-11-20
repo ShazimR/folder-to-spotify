@@ -57,9 +57,10 @@ def format_duration(seconds: float | None) -> str:
     return f"{minutes}:{seconds:02d}"
 
 
-def main() -> None:
+def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Preview Spotify candidates for local music files."
+        prog=prog,
+        description="Preview Spotify candidates for local music files.",
     )
     parser.add_argument("root", type=Path, help="Root music folder")
     parser.add_argument(
@@ -98,7 +99,7 @@ def main() -> None:
         default="single",
         help="Create one playlist or group by immediate subfolder",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.review and (not sys.stdin.isatty() or not sys.stdout.isatty()):
         parser.error("--review requres an interactive terminal")

@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-folder-to-spotify = "folder_to_spotify.cli:main"
+folder-to-spotify = "folder_to_spotify.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

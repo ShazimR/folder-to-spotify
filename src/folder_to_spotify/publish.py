@@ -312,9 +312,10 @@ def reset_plan_with_urls(
     return journal.reset_plan(account_id, fingerprint, playlist_index=playlist_index)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Preview or publish a saved Spotify playlist plan"
+        prog=prog,
+        description="Preview or publish a saved Spotify playlist plan",
     )
     parser.add_argument(
         "plan",
@@ -351,7 +352,7 @@ def main() -> None:
         metavar="NUMBER",
         help="Reset only this playlist, using ts 1-based number in the plan",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.playlist is not None and not args.reset_journal:
         parser.error("--playlist requires --reset-journal")

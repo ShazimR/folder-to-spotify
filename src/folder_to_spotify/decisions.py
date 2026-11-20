@@ -134,8 +134,10 @@ class DecisionStore:
                 return cursor.rowcount
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Manage saved song review decisions")
+def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        prog=prog, description="Manage saved song review decisions"
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     forget_parser = commands.add_parser(
@@ -148,8 +150,7 @@ def main() -> None:
         nargs="+",
         help="Paths to one or more local music files",
     )
-
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.command == "forget":
         store = DecisionStore()

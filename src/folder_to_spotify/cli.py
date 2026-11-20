@@ -8,16 +8,17 @@ from folder_to_spotify.metadata import read_song
 from folder_to_spotify.scanner import find_music_files
 
 
-def main() -> None:
+def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Build Spotify playlists from local music folders."
+        prog=prog,
+        description="Build Spotify playlists from local music folders.",
     )
     parser.add_argument(
         "root",
         type=Path,
         help="Root folder containing your music",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     root = args.root.expanduser().resolve()
 
